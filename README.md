@@ -97,14 +97,14 @@ You should see the filter being created and AnimeJaNai reporting a slot:
 ```
 
 The first playback at a given resolution builds a TensorRT engine. That takes
-roughly 10–60 seconds on a modern GPU; playback pauses for the build (AnimeJaNai
+roughly 10–90 seconds on a modern GPU; playback pauses for the build (AnimeJaNai
 ships a script that does this, and the installer keeps it) and resumes
 automatically. Later plays reuse the cached engine and start instantly.
 AnimeJaNai's own status file is
 `%LOCALAPPDATA%\NuvioAnimeJaNai\animejanai\currentanimejanai.log`.
 
 Verified end-to-end on Nuvio 0.1.27 with a 1920x1080 23.976 fps episode: the
-Balanced engine built in ~25 s, the filter reported
+Balanced engine built in ~80 s, the filter reported
 `Configured slot 1002: 1920x1080 -> 3840x2160`, and switching to slot `0` and
 back to `1002` from another shell re-applied the cached engine without a
 rebuild. That run had an earlier patched bridge installed, so it exercised the
