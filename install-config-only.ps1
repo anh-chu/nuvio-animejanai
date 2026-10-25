@@ -86,18 +86,22 @@ if ($Uninstall) {
     $libPath = [Environment]::GetEnvironmentVariable('NUVIO_LIBMPV_PATH', 'User')
     $configPath = [Environment]::GetEnvironmentVariable('NUVIO_MPV_CONFIG_DIR', 'User')
 
-    if ($libPath -and $libPath -ieq $ShimDll) {
+    $ownsLibPath = $libPath -and $libPath -ieq $ShimDll
+    if ($ownsLibPath) {
         Remove-UserVariable 'NUVIO_LIBMPV_PATH'
         Write-Ok "removed NUVIO_LIBMPV_PATH"
     } else {
         Write-Note "NUVIO_LIBMPV_PATH left alone (not this install)"
     }
 
-    if ($configPath -and $configPath -ieq $ConfigDir) {
+    # Only remove the config pointer when this shim was the active library.
+    # A -NoEnv install (or a different active install) must not touch the
+    # user's existing environment.
+    if ($ownsLibPath -and $configPath -and $configPath -ieq $ConfigDir) {
         Remove-UserVariable 'NUVIO_MPV_CONFIG_DIR'
         Write-Ok "removed NUVIO_MPV_CONFIG_DIR"
-    } else {
-        Write-Note "NUVIO_MPV_CONFIG_DIR left alone (not this install)"
+    } elseif ($configPath) {
+        Write-Note "NUVIO_MPV_CONFIG_DIR left alone (this install is not active)"
     }
 
     if (Test-Path -LiteralPath $InstallDir) {
