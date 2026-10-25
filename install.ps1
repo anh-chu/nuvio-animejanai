@@ -76,7 +76,7 @@ Set-StrictMode -Version Latest
 
 $ReleaseBase = "https://github.com/the-database/mpv-AnimeJaNai/releases/download/$AnimeJaNaiVersion"
 $ShimUrl = 'https://raw.githubusercontent.com/anh-chu/nuvio-animejanai/main/shim/libmpv-2.dll'
-$ShimSha256 = '147859ea4b6854de19e2719d24c7ad6e428f7b3d4c19792f04e95090023d681c'
+$ShimSha256 = 'a59654d91c542c7a1bc76aef5384a12882b839af452a97e73f18008691b2f91b'
 
 $CacheDir = Join-Path $InstallDir 'cache'
 $PlayerDir = Join-Path $InstallDir 'libmpv'

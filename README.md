@@ -12,6 +12,11 @@ embedded player, and to keep it working after Nuvio updates.
 re-apply — the integration does not patch Nuvio and does not depend on any
 Nuvio release.
 
+> **Only want your own `mpv.conf`, without AnimeJaNai?** Use the config-only
+> setup in [CONFIG-ONLY.md](CONFIG-ONLY.md). It installs the same shim but
+> keeps Nuvio's stock libmpv, so there are no models, TensorRT, or large
+> downloads.
+
 > **Status:** user-side proof of concept, not an upstream feature. Verified on
 > Nuvio Desktop 0.1.27-alpha; see
 > [NuvioMedia/NuvioDesktop#738](https://github.com/NuvioMedia/NuvioDesktop/issues/738)
@@ -25,7 +30,7 @@ Nuvio release.
 | --- | --- |
 | OS | Windows 10/11, x64 |
 | GPU | NVIDIA RTX (TensorRT). Other GPUs are not covered by this installer. |
-| App | Nuvio Desktop 0.1.27-alpha or newer (tested in-app on 0.1.27; 0.1.32 checked against its source) |
+| App | Nuvio Desktop 0.1.27-alpha or newer (AnimeJaNai tested in-app on 0.1.27; 0.1.32 checked against its source; config-only shim v2 verified in-app on 1.1.32) |
 | Disk | ~1.6 GB, of which ~0.8 GB is a download cache that re-runs reuse (safe to delete) |
 | Network | ~600 MB download on first install |
 
@@ -149,6 +154,8 @@ reads when loading its player library — this repository's shim sits there. The
 shim is not compiled against Nuvio, does not patch Nuvio, and only relies on
 libmpv's stable C API, so a new Nuvio release keeps loading it. The
 `config=no` call that a new release makes is rewritten by the shim at runtime.
+The shim also auto-discovers the real libmpv next to the running
+`player_bridge.dll`, so a changed native cache hash does not matter.
 
 Only re-run the installer if you want to change options, or if AnimeJaNai ships
 a newer version you want to move to.
@@ -285,16 +292,20 @@ No. An update replaces Nuvio's own files, not user environment variables or
 No. Everything is per-user and `Program Files` is untouched.
 
 **Does this only work with AnimeJaNai?**
-The shim is generic: point `NUVIO_MPV_CONFIG_DIR` at any mpv config folder and
-`NUVIO_MPV_REAL_LIBRARY` at any recent libmpv build. The installer is the
-AnimeJaNai-specific part.
+No. The shim is generic. With `NUVIO_MPV_REAL_LIBRARY` unset it finds the
+libmpv next to Nuvio's `player_bridge.dll`, so it works with the stock player
+and needs no fixed cache path. See [CONFIG-ONLY.md](CONFIG-ONLY.md) for that
+setup. The AnimeJaNai installer is the part that adds models and TensorRT.
 
 **Which Nuvio versions were tested?**
 Nuvio 0.1.27-alpha end to end in the app (1080p episode → 3840x2160, slot
 switching over IPC; that run had the earlier patched bridge installed, so the
 shim's `config=no` rewrite was validated by replaying the stock bridge's exact
 call sequence rather than by a second in-app run). Nuvio 0.1.32-alpha was
-checked against its source, not run in the app.
+checked against its source. The config-only path (shim v2, stock libmpv,
+auto-discovery, no `NUVIO_MPV_REAL_LIBRARY`) was verified in-app on Nuvio
+Desktop 1.1.32: mpv read `%APPDATA%\mpv\mpv.conf`, applied `vo=gpu-next`,
+`gpu-api=d3d11`, `target-peak=730`, and used d3d11va hardware decoding.
 
 ---
 
