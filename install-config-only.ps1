@@ -29,6 +29,11 @@
 .PARAMETER NoEnv
     Install the shim but do not change environment variables.
 
+.PARAMETER Force
+    Replace an existing NUVIO_MPV_REAL_LIBRARY that points to a custom
+    libmpv (for example an AnimeJaNai install). Without this switch the
+    script stops instead of silently replacing it.
+
 .PARAMETER Uninstall
     Remove the shim and the two environment variables this script manages.
     The mpv config directory is left untouched.
@@ -44,6 +49,7 @@ param(
     [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'NuvioMpvConfig'),
     [string]$ConfigDir = (Join-Path $env:APPDATA 'mpv'),
     [switch]$NoEnv,
+    [switch]$Force,
     [switch]$Uninstall
 )
 
@@ -133,13 +139,16 @@ if ($actual -ne $ShimSha256) {
 }
 Write-Ok ("shim {0:N0} bytes, sha256 verified" -f (Get-Item -LiteralPath $ShimDll).Length)
 
-$existingReal = [Environment]::GetEnvironmentVariable('NUVIO_MPV_REAL_LIBRARY', 'User')
-if ($existingReal -and $existingReal -notmatch '\\Nuvio\\Cache\\native-player-bridge\\') {
-    Write-Warn "NUVIO_MPV_REAL_LIBRARY was set to $existingReal"
-    Write-Warn 'The config-only shim clears it and uses auto-discovery.'
-}
-
 if (-not $NoEnv) {
+    $existingReal = [Environment]::GetEnvironmentVariable('NUVIO_MPV_REAL_LIBRARY', 'User')
+    if ($existingReal -and $existingReal -notmatch '\\Nuvio\\Cache\\native-player-bridge\\') {
+        if ((Test-Path -LiteralPath $existingReal) -and -not $Force) {
+            throw "NUVIO_MPV_REAL_LIBRARY points to an existing custom libmpv:`n  $existingReal`nThis looks like an AnimeJaNai or other custom install. Re-run with -Force to replace it, or use install.ps1 for AnimeJaNai."
+        }
+        Write-Warn "NUVIO_MPV_REAL_LIBRARY was set to $existingReal"
+        Write-Warn 'The config-only shim clears it and uses auto-discovery.'
+    }
+
     Write-Step 'Setting user environment variables'
     [Environment]::SetEnvironmentVariable('NUVIO_LIBMPV_PATH', $ShimDll, 'User')
     [Environment]::SetEnvironmentVariable('NUVIO_MPV_CONFIG_DIR', $ConfigDir, 'User')

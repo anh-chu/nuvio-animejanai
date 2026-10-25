@@ -20,6 +20,7 @@ on:
       - main
     paths:
       - "src/**"
+      - "shim/**"
       - ".github/workflows/nuvio-animejanai-shim.yml"
 
 permissions:
