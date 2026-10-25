@@ -37,6 +37,10 @@ The script:
 3. clears `NUVIO_MPV_REAL_LIBRARY`, so the shim auto-discovers Nuvio's
    current libmpv instead of using a fixed cache path.
 
+If `NUVIO_MPV_REAL_LIBRARY` already points to an existing custom libmpv (for
+example an AnimeJaNai build), the script stops instead of silently replacing
+it. Re-run with `-Force` only if you really want config-only mode.
+
 Fully quit Nuvio — **including the tray icon** — then start it again. A
 running process cannot pick up new environment variables.
 
@@ -47,7 +51,7 @@ If you prefer not to run a script, the same steps are:
 ```powershell
 $dir = "$env:LOCALAPPDATA\NuvioMpvConfig"
 New-Item -ItemType Directory -Force $dir | Out-Null
-Invoke-WebRequest "https://raw.githubusercontent.com/anh-chu/nuvio-animejanai/main/shim/libmpv-2.dll" -OutFile "$dir\libmpv-2.dll"
+Invoke-WebRequest "https://raw.githubusercontent.com/anh-chu/nuvio-animejanai/main/shim/libmpv-2.dll" -OutFile "$dir\libmpv-2.dll" -UseBasicParsing
 [Environment]::SetEnvironmentVariable('NUVIO_LIBMPV_PATH', "$dir\libmpv-2.dll", 'User')
 [Environment]::SetEnvironmentVariable('NUVIO_MPV_CONFIG_DIR', "$env:APPDATA\mpv", 'User')
 [Environment]::SetEnvironmentVariable('NUVIO_MPV_REAL_LIBRARY', $null, 'User')
