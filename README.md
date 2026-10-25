@@ -107,7 +107,10 @@ Verified end-to-end on Nuvio 0.1.27 with a 1920x1080 23.976 fps episode: the
 Balanced engine built in ~25 s, the filter reported
 `Configured slot 1002: 1920x1080 -> 3840x2160`, and switching to slot `0` and
 back to `1002` from another shell re-applied the cached engine without a
-rebuild.
+rebuild. That run had an earlier patched bridge installed, so it exercised the
+AnimeJaNai side; the shim's `config=no` rewrite was validated separately by
+replaying the stock bridge's exact call sequence. Nuvio 0.1.32's source still
+makes that same call.
 
 If the log lists `[upscale-on]` but no `[animejanai]` lines, see
 [Troubleshooting](#troubleshooting).
@@ -288,8 +291,10 @@ AnimeJaNai-specific part.
 
 **Which Nuvio versions were tested?**
 Nuvio 0.1.27-alpha end to end in the app (1080p episode → 3840x2160, slot
-switching over IPC). Nuvio 0.1.32-alpha was checked against its source, not run
-in the app.
+switching over IPC; that run had the earlier patched bridge installed, so the
+shim's `config=no` rewrite was validated by replaying the stock bridge's exact
+call sequence rather than by a second in-app run). Nuvio 0.1.32-alpha was
+checked against its source, not run in the app.
 
 ---
 
