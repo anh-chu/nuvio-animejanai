@@ -1,0 +1,123 @@
+name: Build Nuvio AnimeJaNai shim
+
+run-name: libmpv-2.dll shim
+
+# Builds src/mpv_shim.c into a drop-in libmpv-2.dll and publishes it as a
+# public release asset, so the installer can download it anonymously -- Actions
+# artifacts require a GitHub login. The same binary is committed at
+# shim/libmpv-2.dll and is what install.ps1 fetches by default.
+#
+# The shim does not compile against Nuvio or mpv headers, and does not link
+# either. It only needs MSVC and the Windows SDK, both present on the runner.
+# One build serves every Nuvio release: the shim sits in front of libmpv via
+# NUVIO_LIBMPV_PATH and only depends on the stable libmpv C ABI.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - ".github/workflows/nuvio-animejanai-shim.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: libmpv-2.dll (shim)
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Compile the shim
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path $env:RUNNER_TEMP 'shim'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Push-Location 'src'
+          try {
+            & cl.exe /nologo /LD /O2 /W3 /D_CRT_SECURE_NO_WARNINGS mpv_shim.c `
+              /link /OUT:"$out\libmpv-2.dll" user32.lib
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Pop-Location
+          }
+
+          $dll = Join-Path $out 'libmpv-2.dll'
+          if (-not (Test-Path -LiteralPath $dll)) { throw "Expected output missing: $dll" }
+
+          # Fail loudly if an export ever disappears: Nuvio loads these by name.
+          $expected = @(
+            'mpv_create', 'mpv_initialize', 'mpv_terminate_destroy',
+            'mpv_set_option', 'mpv_set_option_string',
+            'mpv_set_property', 'mpv_set_property_string', 'mpv_get_property',
+            'mpv_command', 'mpv_error_string', 'mpv_free',
+            'mpv_wait_event', 'mpv_wakeup',
+            # Forward-compatibility surface (not used by Nuvio today).
+            'mpv_get_property_string', 'mpv_command_string', 'mpv_client_api_version',
+            'mpv_observe_property', 'mpv_unobserve_property',
+            'mpv_request_log_messages', 'mpv_set_wakeup_callback',
+            'mpv_free_node_contents'
+          )
+          $dumpbin = (Get-Command dumpbin.exe -ErrorAction Stop).Source
+          $exports = & $dumpbin /nologo /exports $dll | Out-String
+          $missing = $expected | Where-Object { $exports -notmatch ("\b" + [regex]::Escape($_) + "\b") }
+          if ($missing) { throw ("libmpv-2.dll is missing exports: " + ($missing -join ', ')) }
+
+          $hash = (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash.ToLower()
+          $lines = @(
+            '### libmpv-2.dll (Nuvio AnimeJaNai shim)'
+            ''
+            '| | |'
+            '| --- | --- |'
+            ('| size | {0} bytes |' -f (Get-Item -LiteralPath $dll).Length)
+            ('| sha256 | `{0}` |' -f $hash)
+            ('| exports | {0} |' -f $expected.Count)
+            ''
+            'Installer downloads the committed copy from `main`; this release is'
+            'the same binary for anyone who prefers a release asset.'
+          )
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ($lines -join "`n")
+          $lines | ForEach-Object { Write-Host $_ }
+
+          "SHIM_DIR=$out" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuvio-animejanai-shim
+          path: ${{ env.SHIM_DIR }}/libmpv-2.dll
+          if-no-files-found: error
+
+      - name: Publish release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nuvio-animejanai-shim-v1
+          name: Nuvio AnimeJaNai shim (libmpv-2.dll)
+          body: |
+            `libmpv-2.dll` shim used by the [Nuvio AnimeJaNai installer](https://github.com/anh-chu/nuvio-animejanai).
+
+            It forwards the libmpv entry points Nuvio's player bridge uses
+            (plus a few forward-compatibility exports) and rewrites
+            `config=no` into `config-dir=$NUVIO_MPV_CONFIG_DIR` +
+            `config=yes`. With `NUVIO_MPV_CONFIG_DIR` unset it is a pass-through,
+            so stock behaviour is unchanged.
+
+            One build works across Nuvio releases: it depends on the libmpv C ABI,
+            not on Nuvio's bridge.
+          files: ${{ env.SHIM_DIR }}/libmpv-2.dll
+          fail_on_unmatched_files: true
+          make_latest: false
