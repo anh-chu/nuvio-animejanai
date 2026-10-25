@@ -71,7 +71,9 @@ jobs:
             'mpv_get_property_string', 'mpv_command_string', 'mpv_client_api_version',
             'mpv_observe_property', 'mpv_unobserve_property',
             'mpv_request_log_messages', 'mpv_set_wakeup_callback',
-            'mpv_free_node_contents'
+            'mpv_free_node_contents',
+            # Shim marker (not part of the libmpv ABI).
+            'nuvio_mpv_shim_version'
           )
           $dumpbin = (Get-Command dumpbin.exe -ErrorAction Stop).Source
           $exports = & $dumpbin /nologo /exports $dll | Out-String
@@ -128,6 +130,12 @@ jobs:
             `config=no` into `config-dir=$NUVIO_MPV_CONFIG_DIR` +
             `config=yes`. With `NUVIO_MPV_CONFIG_DIR` unset it is a pass-through,
             so stock behaviour is unchanged.
+
+            Since shim v2 the real libmpv is auto-discovered next to the
+            running `player_bridge.dll`, so no fixed
+            `NUVIO_MPV_REAL_LIBRARY` cache path is needed. That path remains
+            available as an explicit override (the AnimeJaNai installer uses
+            it).
 
             The [workflow](https://github.com/anh-chu/nuvio-animejanai/actions)
             separately compiles `src/mpv_shim.c` and uploads that build as a

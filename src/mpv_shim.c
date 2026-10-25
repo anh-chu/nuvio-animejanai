@@ -1,16 +1,17 @@
 /*
- * libmpv-2.dll shim for Nuvio Desktop + AnimeJaNai.
+ * libmpv-2.dll shim for Nuvio Desktop (mpv config / AnimeJaNai).
  *
  * Why this exists
  * ---------------
  * Nuvio's stock player_bridge.dll starts libmpv with `config=no`, so mpv never
- * reads mpv.conf, input.conf, scripts/ or shaders/. AnimeJaNai needs all four.
- * Upstream Nuvio has no setting for this. The alternative to this shim is
- * patching Nuvio's C++ bridge and rebuilding it for every Nuvio release.
+ * reads mpv.conf, input.conf, scripts/ or shaders/. AnimeJaNai needs all four,
+ * and a plain custom mpv.conf needs the same hook. Upstream Nuvio has no
+ * setting for this. The alternative to this shim is patching Nuvio's C++
+ * bridge and rebuilding it for every Nuvio release.
  *
  * This shim is a drop-in libmpv replacement that Nuvio loads through its
- * existing NUVIO_LIBMPV_PATH environment variable. It forwards the 13 libmpv
- * entry points the bridge uses to the real (AnimeJaNai) libmpv, plus a few
+ * existing NUVIO_LIBMPV_PATH environment variable. It forwards the libmpv
+ * entry points the bridge uses to the real library, plus a few
  * forward-compatibility exports, and rewrites one call on the way through:
  *
  *     mpv_set_option_string(mpv, "config", "no")
@@ -21,6 +22,17 @@
  * Nuvio install behaves exactly as before. This shim does not depend on any
  * Nuvio internals, so it survives Nuvio updates; only the libmpv ABI matters.
  *
+ * The real libmpv is found in this order:
+ *
+ *   1. NUVIO_MPV_REAL_LIBRARY, when set to a usable library (explicit override
+ *      used by the AnimeJaNai installer). A stale value is ignored.
+ *   2. The directory of the loaded player_bridge.dll. Nuvio extracts the
+ *      bridge and its libmpv into the same content-hash cache directory, so
+ *      this follows Nuvio updates without any fixed cache path.
+ *   3. <shim>\..\libmpv\libmpv-2.dll (AnimeJaNai install layout).
+ *   4. The newest directory under
+ *      %LOCALAPPDATA%\Nuvio\Cache\native-player-bridge\windows\.
+ *
  * Build (MSVC, x64):
  *     cl /nologo /LD /O2 /W3 mpv_shim.c /link /OUT:libmpv-2.dll user32.lib
  */
@@ -29,8 +41,9 @@
 #include <windows.h>
 #include <stdarg.h>
 #include <string.h>
+#include <wchar.h>
 
-#define SHIM_MAX_PATH 32768
+#define SHIM_MAX_PATH 8192
 #define SHIM_MPV_FORMAT_FLAG 3
 #define SHIM_MPV_ERROR_LOADING_FAILED (-14)
 
@@ -128,43 +141,182 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
     return TRUE;
 }
 
-static BOOL WINAPI shim_resolve(PINIT_ONCE once, PVOID parameter, PVOID *context)
+static void shim_clear_exports(void)
+{
+    p_create = NULL;
+    p_initialize = NULL;
+    p_terminate_destroy = NULL;
+    p_set_option = NULL;
+    p_set_option_string = NULL;
+    p_set_property = NULL;
+    p_set_property_string = NULL;
+    p_get_property = NULL;
+    p_command = NULL;
+    p_error_string = NULL;
+    p_free = NULL;
+    p_wait_event = NULL;
+    p_wakeup = NULL;
+
+    p_get_property_string = NULL;
+    p_command_string = NULL;
+    p_client_api_version = NULL;
+    p_observe_property = NULL;
+    p_unobserve_property = NULL;
+    p_request_log_messages = NULL;
+    p_set_wakeup_callback = NULL;
+    p_free_node_contents = NULL;
+}
+
+static BOOL shim_join_path(wchar_t *out, size_t capacity, const wchar_t *directory,
+                           const wchar_t *leaf)
+{
+    size_t directory_length = wcslen(directory);
+    size_t leaf_length = wcslen(leaf);
+    size_t total;
+
+    while (directory_length > 0 &&
+           (directory[directory_length - 1] == L'\\' || directory[directory_length - 1] == L'/')) {
+        directory_length--;
+    }
+
+    total = directory_length + 1 + leaf_length + 1;
+    if (total > capacity) {
+        return FALSE;
+    }
+
+    memcpy(out, directory, directory_length * sizeof(wchar_t));
+    out[directory_length] = L'\\';
+    memcpy(out + directory_length + 1, leaf, (leaf_length + 1) * sizeof(wchar_t));
+    return TRUE;
+}
+
+static BOOL shim_module_directory(HMODULE module, wchar_t *out, size_t capacity)
 {
     wchar_t path[SHIM_MAX_PATH];
-    DWORD length;
-    BOOL ok = TRUE;
+    wchar_t *slash;
+    DWORD length = GetModuleFileNameW(module, path, SHIM_MAX_PATH);
 
-    (void)once;
-    (void)parameter;
-    (void)context;
-
-    length = GetEnvironmentVariableW(L"NUVIO_MPV_REAL_LIBRARY", path, SHIM_MAX_PATH);
     if (length == 0 || length >= SHIM_MAX_PATH) {
-        wchar_t self_path[SHIM_MAX_PATH];
-        DWORD self_length = GetModuleFileNameW(g_self, self_path, SHIM_MAX_PATH);
-        wchar_t *slash;
-
-        if (self_length == 0 || self_length >= SHIM_MAX_PATH) {
-            shim_log(L"cannot determine shim directory (error %lu)", GetLastError());
-            return TRUE;
-        }
-        slash = wcsrchr(self_path, L'\\');
-        if (!slash) {
-            shim_log(L"cannot split shim path");
-            return TRUE;
-        }
-        *slash = 0;
-        /* <install>\shim\libmpv-2.dll  ->  <install>\libmpv\libmpv-2.dll */
-        wsprintfW(path, L"%s\\..\\libmpv\\libmpv-2.dll", self_path);
+        return FALSE;
     }
 
-    g_real = LoadLibraryW(path);
-    if (!g_real) {
-        shim_log(L"LoadLibraryW failed (%lu): %s", GetLastError(), path);
-        return TRUE;
+    slash = wcsrchr(path, L'\\');
+    if (!slash) {
+        return FALSE;
+    }
+    *slash = 0;
+
+    if (wcslen(path) + 1 > capacity) {
+        return FALSE;
+    }
+    lstrcpynW(out, path, (int)capacity);
+    return TRUE;
+}
+
+/* Nuvio extracts the player bridge and its libmpv into the same content-hash
+ * directory, e.g. ...\native-player-bridge\windows\<hash>\player_bridge.dll.
+ * The bridge's own directory is therefore the most reliable place to find the
+ * libmpv that belongs to the Nuvio build currently running. */
+static BOOL shim_bridge_candidate(wchar_t *out, size_t capacity)
+{
+    wchar_t directory[SHIM_MAX_PATH];
+    HMODULE bridge = GetModuleHandleW(L"player_bridge.dll");
+
+    if (bridge == NULL || bridge == g_self) {
+        return FALSE;
+    }
+    if (!shim_module_directory(bridge, directory, SHIM_MAX_PATH)) {
+        return FALSE;
+    }
+    return shim_join_path(out, capacity, directory, L"libmpv-2.dll");
+}
+
+/* AnimeJaNai layout: <install>\shim\libmpv-2.dll -> <install>\libmpv\libmpv-2.dll */
+static BOOL shim_legacy_candidate(wchar_t *out, size_t capacity)
+{
+    wchar_t directory[SHIM_MAX_PATH];
+
+    if (!shim_module_directory(g_self, directory, SHIM_MAX_PATH)) {
+        return FALSE;
+    }
+    return shim_join_path(out, capacity, directory, L"..\\libmpv\\libmpv-2.dll");
+}
+
+/* Last resort when the bridge is not named player_bridge.dll (or the shim is
+ * loaded by a test harness): pick the newest extracted native cache directory.
+ * Nuvio keeps older content-hash directories around after an update. */
+static BOOL shim_cache_candidate(wchar_t *out, size_t capacity)
+{
+    wchar_t local_app_data[SHIM_MAX_PATH];
+    wchar_t root[SHIM_MAX_PATH];
+    wchar_t pattern[SHIM_MAX_PATH];
+    wchar_t best[SHIM_MAX_PATH];
+    WIN32_FIND_DATAW item;
+    HANDLE find;
+    BOOL found = FALSE;
+    ULARGE_INTEGER best_time;
+    DWORD length;
+
+    length = GetEnvironmentVariableW(L"LOCALAPPDATA", local_app_data, SHIM_MAX_PATH);
+    if (length == 0 || length >= SHIM_MAX_PATH) {
+        return FALSE;
+    }
+    if (!shim_join_path(root, SHIM_MAX_PATH, local_app_data,
+                        L"Nuvio\\Cache\\native-player-bridge\\windows")) {
+        return FALSE;
+    }
+    if (!shim_join_path(pattern, SHIM_MAX_PATH, root, L"*")) {
+        return FALSE;
     }
 
-    wcscpy_s(g_real_path, SHIM_MAX_PATH, path);
+    find = FindFirstFileW(pattern, &item);
+    if (find == INVALID_HANDLE_VALUE) {
+        return FALSE;
+    }
+
+    do {
+        wchar_t directory[SHIM_MAX_PATH];
+        wchar_t candidate[SHIM_MAX_PATH];
+        WIN32_FILE_ATTRIBUTE_DATA attributes;
+        ULARGE_INTEGER stamp;
+
+        if ((item.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+            continue;
+        }
+        if (wcscmp(item.cFileName, L".") == 0 || wcscmp(item.cFileName, L"..") == 0) {
+            continue;
+        }
+        if (!shim_join_path(directory, SHIM_MAX_PATH, root, item.cFileName)) {
+            continue;
+        }
+        if (!shim_join_path(candidate, SHIM_MAX_PATH, directory, L"libmpv-2.dll")) {
+            continue;
+        }
+        if (!GetFileAttributesExW(candidate, GetFileExInfoStandard, &attributes)) {
+            continue;
+        }
+
+        stamp.LowPart = attributes.ftLastWriteTime.dwLowDateTime;
+        stamp.HighPart = attributes.ftLastWriteTime.dwHighDateTime;
+        if (!found || stamp.QuadPart > best_time.QuadPart) {
+            lstrcpynW(best, candidate, SHIM_MAX_PATH);
+            best_time = stamp;
+            found = TRUE;
+        }
+    } while (FindNextFileW(find, &item));
+
+    FindClose(find);
+
+    if (!found) {
+        return FALSE;
+    }
+    lstrcpynW(out, best, (int)capacity);
+    return TRUE;
+}
+
+static BOOL shim_bind_exports(void)
+{
+    BOOL ok = TRUE;
 
 #define SHIM_RESOLVE(field, symbol)                                              \
     do {                                                                         \
@@ -191,6 +343,10 @@ static BOOL WINAPI shim_resolve(PINIT_ONCE once, PVOID parameter, PVOID *context
 
 #undef SHIM_RESOLVE
 
+    if (!ok) {
+        return FALSE;
+    }
+
 #define SHIM_RESOLVE_OPTIONAL(field, symbol)                                      \
     do {                                                                         \
         *(FARPROC *)&field = GetProcAddress(g_real, symbol);                      \
@@ -210,14 +366,93 @@ static BOOL WINAPI shim_resolve(PINIT_ONCE once, PVOID parameter, PVOID *context
 
 #undef SHIM_RESOLVE_OPTIONAL
 
-    if (!ok) {
-        shim_log(L"%s does not look like libmpv; refusing to continue", path);
+    return TRUE;
+}
+
+static BOOL shim_try_library(const wchar_t *path)
+{
+    wchar_t loaded_path[SHIM_MAX_PATH];
+    DWORD length;
+    HMODULE module;
+
+    if (path == NULL || path[0] == 0) {
+        return FALSE;
+    }
+    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) {
+        return FALSE;
+    }
+
+    /* LOAD_WITH_ALTERED_SEARCH_PATH makes the real libmpv resolve its own
+     * runtime DLLs (msvcp140, vcruntime140, ...) from the cache directory it
+     * was extracted into, instead of relying on the process PATH. */
+    module = LoadLibraryExW(path, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+    if (module == NULL) {
+        shim_log(L"LoadLibraryExW failed (%lu): %s", GetLastError(), path);
+        return FALSE;
+    }
+
+    /* Never accept this shim (or another copy of it) as the real library. */
+    if (module == g_self || GetProcAddress(module, "nuvio_mpv_shim_version") != NULL) {
+        shim_log(L"ignoring shim module as real libmpv: %s", path);
+        FreeLibrary(module);
+        return FALSE;
+    }
+
+    length = GetModuleFileNameW(module, loaded_path, SHIM_MAX_PATH);
+    if (length == 0 || length >= SHIM_MAX_PATH) {
+        lstrcpynW(loaded_path, path, SHIM_MAX_PATH);
+    }
+
+    g_real = module;
+    if (!shim_bind_exports()) {
+        shim_log(L"%s does not look like libmpv; trying next candidate", loaded_path);
+        shim_clear_exports();
         FreeLibrary(g_real);
         g_real = NULL;
+        return FALSE;
+    }
+
+    lstrcpynW(g_real_path, loaded_path, SHIM_MAX_PATH);
+    shim_log(L"using real libmpv: %s", g_real_path);
+    return TRUE;
+}
+
+static BOOL WINAPI shim_resolve(PINIT_ONCE once, PVOID parameter, PVOID *context)
+{
+    wchar_t candidate[SHIM_MAX_PATH];
+    DWORD length;
+
+    (void)once;
+    (void)parameter;
+    (void)context;
+
+    /* 1. Explicit override, used by the AnimeJaNai installer to point at its
+     *    own libmpv build. A stale value falls through to auto-discovery. */
+    length = GetEnvironmentVariableW(L"NUVIO_MPV_REAL_LIBRARY", candidate, SHIM_MAX_PATH);
+    if (length > 0 && length < SHIM_MAX_PATH) {
+        if (shim_try_library(candidate)) {
+            return TRUE;
+        }
+        shim_log(L"NUVIO_MPV_REAL_LIBRARY was not usable; falling back to auto-discovery");
+    }
+
+    /* 2. The libmpv that Nuvio extracted next to the running bridge. This
+     *    follows content-hash cache changes across Nuvio updates. */
+    if (shim_bridge_candidate(candidate, SHIM_MAX_PATH) && shim_try_library(candidate)) {
         return TRUE;
     }
 
-    shim_log(L"using real libmpv: %s", path);
+    /* 3. This repository's AnimeJaNai install layout. */
+    if (shim_legacy_candidate(candidate, SHIM_MAX_PATH) && shim_try_library(candidate)) {
+        return TRUE;
+    }
+
+    /* 4. Newest native cache directory, for harnesses and renamed bridges. */
+    if (shim_cache_candidate(candidate, SHIM_MAX_PATH) && shim_try_library(candidate)) {
+        return TRUE;
+    }
+
+    shim_log(L"could not load a usable real libmpv");
     return TRUE;
 }
 
@@ -443,6 +678,13 @@ __declspec(dllexport) void mpv_wakeup(mpv_handle *handle)
     if (p_wakeup) {
         p_wakeup(handle);
     }
+}
+
+/* Identifies this DLL as the shim, so auto-discovery never loads a second copy
+ * of the shim as if it were the real libmpv. Not part of the libmpv ABI. */
+__declspec(dllexport) int nuvio_mpv_shim_version(void)
+{
+    return 2;
 }
 
 /* -------------------------------------------------------------------------
