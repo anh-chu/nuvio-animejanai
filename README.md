@@ -12,6 +12,11 @@ embedded player, and to keep it working after Nuvio updates.
 re-apply — the integration does not patch Nuvio and does not depend on any
 Nuvio release.
 
+> **Status:** user-side proof of concept, not an upstream feature. Verified on
+> Nuvio Desktop 0.1.27-alpha; see
+> [NuvioMedia/NuvioDesktop#738](https://github.com/NuvioMedia/NuvioDesktop/issues/738)
+> for the upstream discussion. Nothing here is endorsed by Nuvio.
+
 ---
 
 ## Requirements
@@ -55,8 +60,10 @@ The installer:
 1. downloads AnimeJaNai 3.8.0 from the official `the-database/mpv-AnimeJaNai`
    release and extracts only what the player needs (the AnimeJaNai libmpv, the
    models, the TensorRT runtime, and the builder matching your GPU);
-2. downloads the small `libmpv-2.dll` shim built by this repository's
-   [GitHub Actions workflow](.github/workflows/nuvio-animejanai-shim.yml);
+2. downloads the tested `libmpv-2.dll` shim committed at
+   [`shim/libmpv-2.dll`](shim/libmpv-2.dll) and verifies its SHA-256 (the
+   [GitHub Actions workflow](.github/workflows/nuvio-animejanai-shim.yml)
+   separately rebuilds `src/mpv_shim.c` to check the source still compiles);
 3. generates an mpv config directory, carrying over settings from
    `%APPDATA%\mpv\mpv.conf` if present;
 4. sets three **user** environment variables:
@@ -237,9 +244,10 @@ Unset `NUVIO_MPV_CONFIG_DIR` and the shim forwards the original call untouched,
 so a normal Nuvio install keeps its exact stock behaviour.
 
 The alternative — patching `player_bridge.cpp` to honour a config directory —
-needs a matching build for every Nuvio release. The shim is built once by GitHub
-Actions, committed here as [`shim/libmpv-2.dll`](shim/libmpv-2.dll) (and
-published as a release asset), and depends only on the libmpv C ABI.
+needs a matching build for every Nuvio release. The shim is compiled from
+[`src/mpv_shim.c`](src/mpv_shim.c) by GitHub Actions, committed here as
+[`shim/libmpv-2.dll`](shim/libmpv-2.dll) (the tested binary used by the
+installer and the release), and depends only on the libmpv C ABI.
 
 ```
 %LOCALAPPDATA%\NuvioAnimeJaNai\
